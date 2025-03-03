@@ -28,12 +28,13 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
         _repoData = repo;
 
         Icon = Icons.AppIcon;
-        Title = repo.Name;
         Name = "Open";
 
         var repoPath = _repoData.Path;
 
         _repo = new(repoPath);
+
+        Title = $"{repo.Name} {BranchString(_repo)}";
 
         _watcher = new FileSystemWatcher
         {
@@ -49,6 +50,37 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
         _watcher.Renamed += OnRepoChanged;
 
         _watcher.EnableRaisingEvents = true;
+    }
+
+    internal static Branch? CurrentBranch(Repository repo)
+    {
+        foreach (var b in repo.Branches.Where(b => !b.IsRemote))
+        {
+            if (b.IsCurrentRepositoryHead)
+            {
+                return b;
+            }
+        }
+        return null;
+    }
+
+    internal static string BranchString(Repository repo) =>
+        CurrentBranch(repo) is Branch currentBranch ?
+        $"on {currentBranch.FriendlyName}" :
+        $"DETACHED at {repo.Head.Tip.Sha[..8]}";
+
+    internal static string RepoStatusDisplayString(RepositoryStatus status)
+    {
+        return string.Format(CultureInfo.InvariantCulture,
+                                "+{0} ~{1} -{2} | +{3} ~{4} -{5} | i{6}",
+                                status.Added.Count(),
+                                status.Staged.Count(),
+                                status.Removed.Count(),
+                                status.Untracked.Count(),
+                                status.Modified.Count(),
+                                status.Missing.Count(),
+                                status.Ignored.Count());
+
     }
 
     public override IListItem[] GetItems()
@@ -74,14 +106,50 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
         }
         if (stagedChanges.Any())
         {
-            allCommands.Add(new(new CommitPage(_repo)));
+            allCommands.Add(new(new CommitPage(_repo)) { Subtitle = $"{StagedSubtitle(status)} on {BranchString(_repo)}" });
             allCommands.Add(new(new UnstageAllCommand(_repo)));
+        }
+
+        if (_repo.Head is Branch currentBranch)
+        {
+            // Retrieve tracking details
+            var trackingDetails = currentBranch.TrackingDetails;
+
+            // trackingDetails will be 0,0 even if there's no upstream
+            // 'BehindBy' indicates commits present in upstream (to pull)
+            // 'AheadBy' indicates commits present locally (to push)
+            var commitsToPull = trackingDetails.BehindBy ?? 0;
+            var commitsToPush = trackingDetails.AheadBy ?? 0;
+
+            if (commitsToPull > 0)
+            {
+                allCommands.Add(new(new PullCommand(_repo)) { Subtitle = $"{commitsToPull} behind" });
+            }
+            if (currentBranch.TrackedBranch == null || commitsToPush > 0)
+            {
+                var pushCommand = PushCommand.CreatePushForCurrentBrach(_repo);
+                if (pushCommand != null)
+                {
+                    allCommands.Add(new(pushCommand) { Subtitle = commitsToPush > 0 ? $"{commitsToPush} ahead" : string.Empty });
+                }
+
+            }
         }
 
         allCommands.AddRange(items);
 
         IsLoading = false;
         return allCommands.ToArray();
+    }
+
+    internal static string StagedSubtitle(RepositoryStatus status)
+    {
+        return string.Format(CultureInfo.InvariantCulture,
+                                "Added {0} Modified {1} Removed {2} ",
+                                status.Added.Count(),
+                                status.Staged.Count(),
+                                status.Removed.Count());
+
     }
 
     private static bool IsUnstagedChange(StatusEntry file)
@@ -323,6 +391,30 @@ internal sealed partial class UnstageAllCommand : InvokableCommand
         return CommandResult.KeepOpen();
     }
 }
+
+internal sealed partial class PullCommand : InvokableCommand
+{
+    private readonly Repository _repo;
+    internal PullCommand(Repository repo)
+    {
+        Name = "Pull";
+        Icon = Icons.Pull;
+        _repo = repo;
+    }
+    public override ICommandResult Invoke()
+    {
+        var options = new LibGit2Sharp.PullOptions
+        {
+            FetchOptions = new FetchOptions()
+        };
+        var signature = _repo.Config.BuildSignature(System.DateTimeOffset.Now);
+
+        Commands.Pull(_repo, signature, options);
+
+        return CommandResult.KeepOpen();
+    }
+}
+
 internal sealed partial class CommitPage : ContentPage
 {
     private readonly Repository _repo;
@@ -399,7 +491,7 @@ internal sealed partial class CommitForm : FormContent
     "actions": [
         {
             "type": "Action.Submit",
-            "title": "Save",
+            "title": "Commit",
             "data": {
                 "title": "title",
                 "body": "body"
@@ -421,7 +513,7 @@ internal sealed partial class CommitForm : FormContent
         // get the name and url out of the values
         var title = formInput["title"]?.ToString() ?? string.Empty;
         var body = formInput["body"]?.ToString() ?? string.Empty;
-        var fullMessage = string.IsNullOrEmpty(body) ? title : $"{title}\n\n${body}";
+        var fullMessage = string.IsNullOrEmpty(body) ? title : $"{title}\n\n{body.Replace('\r', '\n')}";
 
         // Build the signature from the repo's configuration (username/email)
         var signature = _repo.Config.BuildSignature(System.DateTimeOffset.Now);
@@ -489,6 +581,9 @@ internal sealed class Icons
     public static readonly IconInfo AddAll = new("\uED0E"); // SubscriptionAdd
     public static readonly IconInfo AddNewRepo = new("\uED0E"); // SubscriptionAdd
     public static readonly IconInfo Commit = new("\uE78C"); // SaveLocal
+
+    public static readonly IconInfo Push = new("\uE898"); // Upload
+    public static readonly IconInfo Pull = new("\uEBD3"); // CloudDownload
 
 }
 
