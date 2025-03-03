@@ -43,6 +43,7 @@
     <PackageReference Include="Microsoft.Windows.CsWinRT" />
     <PackageReference Include="Microsoft.WindowsAppSDK" />
     <PackageReference Include="Microsoft.Web.WebView2" />
+    <PackageReference Include="System.IO.FileSystem.Watcher" />
   </ItemGroup>
 
   <!--
