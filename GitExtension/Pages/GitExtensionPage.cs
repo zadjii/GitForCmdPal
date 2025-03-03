@@ -9,21 +9,25 @@ using System.Linq;
 using LibGit2Sharp;
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
+using Windows.Storage.Streams;
 
 namespace GitExtension;
 
 internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
 {
+    private readonly RepoData _repoData;
     private readonly Repository _repo;
     private readonly FileSystemWatcher _watcher;
 
-    public GitExtensionPage()
+    public GitExtensionPage(RepoData repo)
     {
-        Icon = IconHelpers.FromRelativePath("Assets\\StoreLogo.png");
-        Title = "Git for CmdPal";
+        _repoData = repo;
+
+        Icon = Icons.AppIcon;
+        Title = repo.Name;
         Name = "Open";
 
-        var repoPath = "d:\\dev\\public\\powertoys";
+        var repoPath = _repoData.Path;
 
         _repo = new(repoPath);
 
@@ -45,16 +49,50 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
 
     public override IListItem[] GetItems()
     {
+        IsLoading = true;
         var status = _repo.RetrieveStatus();
 
         var items = status
             .Where(entry => entry.State is not FileStatus.Unaltered and not FileStatus.Ignored)
+            .OrderBy(entry => entry.State)
             .Select(FileTolistItem)
             .Where(item => item != null)
             .Select(i => i!);
 
+        List<ListItem> allCommands = [];
 
-        return items.ToArray();
+        var unstagedChanges = status.Where(IsUnstagedChange);
+        var stagedChanges = status.Where(IsStagedChange);
+        if (unstagedChanges.Any())
+        {
+            allCommands.Add(new(new AddAllCommand(_repo)));
+        }
+
+        allCommands.AddRange(items);
+
+        IsLoading = false;
+        return allCommands.ToArray();
+    }
+
+    private static bool IsUnstagedChange(StatusEntry file)
+    {
+        var state = file.State;
+        return
+            state.HasFlag(FileStatus.NewInWorkdir) ||
+            state.HasFlag(FileStatus.ModifiedInWorkdir) ||
+            state.HasFlag(FileStatus.DeletedFromWorkdir) ||
+            state.HasFlag(FileStatus.TypeChangeInWorkdir) ||
+            state.HasFlag(FileStatus.RenamedInWorkdir);
+    }
+    private static bool IsStagedChange(StatusEntry file)
+    {
+        var state = file.State;
+        return
+            state.HasFlag(FileStatus.NewInIndex) ||
+            state.HasFlag(FileStatus.ModifiedInIndex) ||
+            state.HasFlag(FileStatus.DeletedFromIndex) ||
+            state.HasFlag(FileStatus.RenamedInIndex) ||
+            state.HasFlag(FileStatus.TypeChangeInIndex);
     }
 
     private ListItem? FileTolistItem(StatusEntry file)
@@ -84,6 +122,10 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
             {
                 subtitle += $": {rename.OldFilePath} -> {rename.NewFilePath}";
             }
+            else if (file.HeadToIndexRenameDetails is RenameDetails rename2)
+            {
+                subtitle += $": {rename2.OldFilePath} -> {rename2.NewFilePath}";
+            }
 
             Command command = state switch
             {
@@ -101,17 +143,20 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
 
                 _ => new NoOpCommand(),
             };
-
-            return new ListItem(command)
+            var getIcon = GetFileIcon(file);
+            //getIcon.ConfigureAwait(false);
+            var li = new ListItem(command)
             {
                 Title = title,
                 Subtitle = subtitle,
                 Tags = [tag],
+                Icon = getIcon,
             };
+            return li;
         }
         catch (Exception e)
         {
-            ExtensionHost.LogMessage((ILogMessage)e);
+            ExtensionHost.LogMessage(e.ToString());
         }
         return null;
     }
@@ -121,6 +166,20 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
 
     private void OnRepoChanged(object sender, FileSystemEventArgs e) =>
         RaiseItemsChanged(-1);
+
+    private IconInfo? GetFileIcon(StatusEntry file)
+    {
+        var path = Path.Combine(_repo.Info.WorkingDirectory, file.FilePath);
+        path = Path.GetFullPath(path);
+        var stream = ThumbnailHelper.GetThumbnail(path).Result;
+        if (stream != null)
+        {
+            var data = new IconData(RandomAccessStreamReference.CreateFromStream(stream));
+            var icon = new IconInfo(data, data);
+            return icon;
+        }
+        return null;
+    }
 }
 
 internal sealed partial class StageCommand : InvokableCommand
@@ -140,6 +199,7 @@ internal sealed partial class StageCommand : InvokableCommand
         return CommandResult.KeepOpen();
     }
 }
+
 internal sealed partial class UnstageCommand : InvokableCommand
 {
     private readonly Repository _repo;
@@ -158,9 +218,27 @@ internal sealed partial class UnstageCommand : InvokableCommand
     }
 }
 
+internal sealed partial class AddAllCommand : InvokableCommand
+{
+    private readonly Repository _repo;
+    internal AddAllCommand(Repository repo)
+    {
+        Name = "Add all";
+        Icon = Icons.AddAll;
+        _repo = repo;
+    }
+    public override ICommandResult Invoke()
+    {
+        Commands.Stage(_repo, "*");
+
+        return CommandResult.KeepOpen();
+    }
+}
+
 
 internal sealed class Icons
 {
+    public static readonly IconInfo AppIcon = IconHelpers.FromRelativePath("Assets\\StoreLogo.scale-200.png");
 
     public static readonly IconInfo Nonexistent_File_Icon = new("");
     public static readonly IconInfo Unaltered_File_Icon = new("");
@@ -175,6 +253,10 @@ internal sealed class Icons
     public static readonly IconInfo TypeChangeInWorkdir_File_Icon = new("");
     public static readonly IconInfo RenamedInWorkdir_File_Icon = new("");
     public static readonly IconInfo Conflicted_File_Icon = new("");
+
+
+    public static readonly IconInfo AddAll = new("\uED0E"); // SubscriptionAdd
+    public static readonly IconInfo AddNewRepo = new("\uED0E"); // SubscriptionAdd
 
 }
 
