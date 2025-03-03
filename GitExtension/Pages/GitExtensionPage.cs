@@ -4,6 +4,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using LibGit2Sharp;
@@ -67,6 +68,10 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
         {
             allCommands.Add(new(new AddAllCommand(_repo)));
         }
+        if (stagedChanges.Any())
+        {
+            allCommands.Add(new(new UnstageAllCommand(_repo)));
+        }
 
         allCommands.AddRange(items);
 
@@ -97,12 +102,48 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
 
     private ListItem? FileTolistItem(StatusEntry file)
     {
+        List<Microsoft.CommandPalette.Extensions.Toolkit.Tag> tags = [];
+        List<Microsoft.CommandPalette.Extensions.Toolkit.Command> commands = [];
+
+        foreach (var state in GetFlags(file.State))
+        {
+            try
+            {
+
+                var tag = Statics.StateTags.TryGetValue(state, out var value) ? value : Statics.UhOhTag;
+                tags.Add(tag);
+
+                Command? command = state switch
+                {
+                    FileStatus.NewInIndex => new UnstageCommand(_repo, file),
+                    FileStatus.ModifiedInIndex => new UnstageCommand(_repo, file),
+                    FileStatus.DeletedFromIndex => new UnstageCommand(_repo, file),
+                    FileStatus.RenamedInIndex => new UnstageCommand(_repo, file),
+                    FileStatus.TypeChangeInIndex => new UnstageCommand(_repo, file),
+
+                    FileStatus.NewInWorkdir => new StageCommand(_repo, file),
+                    FileStatus.ModifiedInWorkdir => new StageCommand(_repo, file),
+                    FileStatus.DeletedFromWorkdir => new StageCommand(_repo, file),
+                    FileStatus.TypeChangeInWorkdir => new StageCommand(_repo, file),
+                    FileStatus.RenamedInWorkdir => new StageCommand(_repo, file),
+
+                    _ => null,
+                };
+
+                if (command != null)
+                {
+                    commands.Add(command);
+                }
+            }
+            catch { }
+
+        }
+
         try
         {
 
             var state = file.State;
 
-            var tag = Statics.StateTags.TryGetValue(state, out var value) ? value : Statics.UhOhTag;
             var title = file.FilePath;
 
             var subtitle = state switch
@@ -116,8 +157,6 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
                 _ => string.Empty,
             };
 
-            // var addedLinesTag = file. new Microsoft.CommandPalette.Extensions.Toolkit.Tag("untracked")
-
             if (file.IndexToWorkDirRenameDetails is RenameDetails rename)
             {
                 subtitle += $": {rename.OldFilePath} -> {rename.NewFilePath}";
@@ -127,30 +166,25 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
                 subtitle += $": {rename2.OldFilePath} -> {rename2.NewFilePath}";
             }
 
-            Command command = state switch
-            {
-                FileStatus.NewInIndex => new UnstageCommand(_repo, file),
-                FileStatus.ModifiedInIndex => new UnstageCommand(_repo, file),
-                FileStatus.DeletedFromIndex => new UnstageCommand(_repo, file),
-                FileStatus.RenamedInIndex => new UnstageCommand(_repo, file),
-                FileStatus.TypeChangeInIndex => new UnstageCommand(_repo, file),
+            var fullPath = Path.Combine(_repo.Info.WorkingDirectory, file.FilePath);
+            fullPath = Path.GetFullPath(fullPath);
 
-                FileStatus.NewInWorkdir => new StageCommand(_repo, file),
-                FileStatus.ModifiedInWorkdir => new StageCommand(_repo, file),
-                FileStatus.DeletedFromWorkdir => new StageCommand(_repo, file),
-                FileStatus.TypeChangeInWorkdir => new StageCommand(_repo, file),
-                FileStatus.RenamedInWorkdir => new StageCommand(_repo, file),
+            var defaultCommand = commands.FirstOrDefault(new NoOpCommand());
+            var remaining = commands.Skip(1);
 
-                _ => new NoOpCommand(),
-            };
-            var getIcon = GetFileIcon(file);
-            //getIcon.ConfigureAwait(false);
-            var li = new ListItem(command)
+            var li = new ListItem(defaultCommand)
             {
                 Title = title,
                 Subtitle = subtitle,
-                Tags = [tag],
-                Icon = getIcon,
+                Tags = tags.ToArray(),
+                Icon = GetFileIcon(file),
+                MoreCommands = [
+                    ..remaining.Select(c => new CommandContextItem(c)),
+                    new CommandContextItem(new OpenUrlCommand(fullPath)) { Title = "Open file" },
+                    new CommandContextItem(new CopyTextCommand(fullPath)) { Title = "Copy full path" },
+                    new CommandContextItem(new CopyTextCommand(file.FilePath)) { Title = "Copy relative path" },
+                    new CommandContextItem(new ShowFileInFolderCommand(fullPath)) { Title = "Open in explorer" },
+                ],
             };
             return li;
         }
@@ -163,6 +197,22 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
 
     public void Dispose() => throw new System.NotImplementedException();
 
+
+    private static IEnumerable<FileStatus> GetFlags(FileStatus input)
+    {
+        foreach (var value in Enum.GetValues<FileStatus>())
+        {
+            if (value == FileStatus.Unaltered)
+            {
+                continue;
+            }
+
+            if (input.HasFlag(value))
+            {
+                yield return value;
+            }
+        }
+    }
 
     private void OnRepoChanged(object sender, FileSystemEventArgs e) =>
         RaiseItemsChanged(-1);
@@ -232,6 +282,55 @@ internal sealed partial class AddAllCommand : InvokableCommand
         Commands.Stage(_repo, "*");
 
         return CommandResult.KeepOpen();
+    }
+}
+internal sealed partial class UnstageAllCommand : InvokableCommand
+{
+    private readonly Repository _repo;
+    internal UnstageAllCommand(Repository repo)
+    {
+        Name = "Unstage all";
+        Icon = Icons.AddAll;
+        _repo = repo;
+    }
+    public override ICommandResult Invoke()
+    {
+        Commands.Unstage(_repo, "*");
+
+        return CommandResult.KeepOpen();
+    }
+}
+
+// Stolen from toolkit 0.0.9
+public partial class ShowFileInFolderCommand : InvokableCommand
+{
+    private readonly string _path;
+    private static readonly IconInfo Ico = new("\uE838");
+
+    public CommandResult Result { get; set; } = CommandResult.GoHome();
+
+    internal ShowFileInFolderCommand(string path)
+    {
+        _path = path;
+        Name = "Show in folder";
+        Icon = Ico;
+    }
+
+    public override CommandResult Invoke()
+    {
+        if (File.Exists(_path))
+        {
+            try
+            {
+                var argument = "/select, \"" + _path + "\"";
+                Process.Start("explorer.exe", argument);
+            }
+            catch (Exception)
+            {
+            }
+        }
+
+        return Result;
     }
 }
 

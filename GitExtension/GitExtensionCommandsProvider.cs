@@ -69,7 +69,7 @@ public partial class GitExtensionCommandsProvider : CommandProvider
 }
 
 
-internal partial class AddRepoPage : ContentPage
+internal sealed partial class AddRepoPage : ContentPage
 {
     private readonly AddRepoForm _addRepo;
 
