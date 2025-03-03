@@ -5,8 +5,11 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
+using System.Text.Json.Nodes;
 using LibGit2Sharp;
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
@@ -64,12 +67,14 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
 
         var unstagedChanges = status.Where(IsUnstagedChange);
         var stagedChanges = status.Where(IsStagedChange);
+
         if (unstagedChanges.Any())
         {
             allCommands.Add(new(new AddAllCommand(_repo)));
         }
         if (stagedChanges.Any())
         {
+            allCommands.Add(new(new CommitPage(_repo)));
             allCommands.Add(new(new UnstageAllCommand(_repo)));
         }
 
@@ -214,8 +219,25 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
         }
     }
 
-    private void OnRepoChanged(object sender, FileSystemEventArgs e) =>
+    private void OnRepoChanged(object sender, FileSystemEventArgs e)
+    {
+        try
+        {
+            // Convert the absolute path to a relative path based on the working directory.
+            var relativePath = Path.GetRelativePath(_repo.Info.WorkingDirectory, e.FullPath);
+
+            // Check if the file is ignored.
+            if (_repo.Ignore.IsPathIgnored(relativePath))
+            {
+                // Skip processing if the file is ignored.
+                return;
+            }
+        }
+        catch { }
+
         RaiseItemsChanged(-1);
+
+    }
 
     private IconInfo? GetFileIcon(StatusEntry file)
     {
@@ -239,6 +261,7 @@ internal sealed partial class StageCommand : InvokableCommand
     internal StageCommand(Repository repo, StatusEntry file)
     {
         Name = "Stage";
+        Icon = Icons.AddAll;
         _repo = repo;
         _file = file;
     }
@@ -300,6 +323,115 @@ internal sealed partial class UnstageAllCommand : InvokableCommand
         return CommandResult.KeepOpen();
     }
 }
+internal sealed partial class CommitPage : ContentPage
+{
+    private readonly Repository _repo;
+    private readonly CommitForm _form;
+    private readonly MarkdownContent _summary;
+    internal CommitPage(Repository repo)
+    {
+        Name = "Commit...";
+        Icon = Icons.Commit;
+        _repo = repo;
+        _form = new(_repo);
+
+        var statusText = new StringBuilder();
+        statusText.Append("# Status\n\n");
+        var status = _repo.RetrieveStatus();
+        foreach (var item in status.Staged)
+        {
+            statusText.Append(DisplayStatus(item));
+            statusText.Append("\n\n");
+        }
+        _summary = new MarkdownContent() { Body = statusText.ToString() };
+    }
+
+    public override IContent[] GetContent() => [_form, _summary];
+
+    internal static string DisplayStatus(StatusEntry file)
+    {
+        if ((file.State & FileStatus.RenamedInIndex) == FileStatus.RenamedInIndex ||
+            (file.State & FileStatus.RenamedInWorkdir) == FileStatus.RenamedInWorkdir)
+        {
+            var oldFilePath = ((file.State & FileStatus.RenamedInIndex) != 0)
+                ? file.HeadToIndexRenameDetails.OldFilePath
+                : file.IndexToWorkDirRenameDetails.OldFilePath;
+
+            return string.Format(CultureInfo.InvariantCulture, "{0}: {1} -> {2}", file.State, oldFilePath, file.FilePath);
+        }
+
+        return string.Format(CultureInfo.InvariantCulture, "{0}: {1}", file.State, file.FilePath);
+    }
+}
+internal sealed partial class CommitForm : FormContent
+{
+    private readonly Repository _repo;
+    internal CommitForm(Repository repo)
+    {
+        _repo = repo;
+
+        TemplateJson = """
+{
+    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+    "type": "AdaptiveCard",
+    "version": "1.5",
+    "body": [
+        {
+            "type": "Input.Text",
+            "style": "text",
+            "id": "title",
+            "label": "Title",
+            "value": "",
+            "placeholder": "Add a commit message",
+            "isRequired": true,
+            "errorMessage": "Message is required"
+        },
+        {
+            "type": "Input.Text",
+            "style": "text",
+            "id": "body",
+            "value": "",
+            "isMultiline": true,
+            "placeholder": "Add more details here",
+            "label": "Path to repo"
+        }
+    ],
+    "actions": [
+        {
+            "type": "Action.Submit",
+            "title": "Save",
+            "data": {
+                "title": "title",
+                "body": "body"
+            }
+        }
+    ]
+}
+""";
+
+    }
+    public override ICommandResult SubmitForm(string inputs, string data)
+    {
+        var formInput = JsonNode.Parse(inputs);
+        if (formInput == null)
+        {
+            return CommandResult.KeepOpen();
+        }
+
+        // get the name and url out of the values
+        var title = formInput["title"]?.ToString() ?? string.Empty;
+        var body = formInput["body"]?.ToString() ?? string.Empty;
+        var fullMessage = string.IsNullOrEmpty(body) ? title : $"{title}\n\n${body}";
+
+        // Build the signature from the repo's configuration (username/email)
+        var signature = _repo.Config.BuildSignature(System.DateTimeOffset.Now);
+
+        // Create the commit
+        _ = _repo.Commit(fullMessage, signature, signature);
+
+        return CommandResult.GoBack();
+    }
+}
 
 // Stolen from toolkit 0.0.9
 public partial class ShowFileInFolderCommand : InvokableCommand
@@ -325,7 +457,7 @@ public partial class ShowFileInFolderCommand : InvokableCommand
                 var argument = "/select, \"" + _path + "\"";
                 Process.Start("explorer.exe", argument);
             }
-            catch (Exception)
+            catch (System.Exception)
             {
             }
         }
@@ -356,6 +488,7 @@ internal sealed class Icons
 
     public static readonly IconInfo AddAll = new("\uED0E"); // SubscriptionAdd
     public static readonly IconInfo AddNewRepo = new("\uED0E"); // SubscriptionAdd
+    public static readonly IconInfo Commit = new("\uE78C"); // SaveLocal
 
 }
 
@@ -398,7 +531,6 @@ internal sealed class Statics
     
         // unstaged
         { FileStatus.NewInWorkdir, new Microsoft.CommandPalette.Extensions.Toolkit.Tag("untracked") { Foreground = StateColors[FileStatus.NewInWorkdir], Icon = Icons.NewInWorkdir_File_Icon }},
-        // { FileStatus.DeletedFromIndex | FileStatus.NewInWorkdir, new Microsoft.CommandPalette.Extensions.Toolkit.Tag("modified") { Foreground = StateColors[FileStatus.ModifiedInWorkdir], Icon = Icons.ModifiedInWorkdir_File_Icon }},
         { FileStatus.ModifiedInWorkdir, new Microsoft.CommandPalette.Extensions.Toolkit.Tag("modified") { Foreground = StateColors[FileStatus.ModifiedInWorkdir], Icon = Icons.ModifiedInWorkdir_File_Icon }},
         { FileStatus.DeletedFromWorkdir, new Microsoft.CommandPalette.Extensions.Toolkit.Tag("deleted") { Foreground = StateColors[FileStatus.DeletedFromWorkdir], Icon = Icons.DeletedFromWorkdir_File_Icon }},
         { FileStatus.TypeChangeInWorkdir, new Microsoft.CommandPalette.Extensions.Toolkit.Tag("renamed") { Foreground = StateColors[FileStatus.TypeChangeInWorkdir], Icon = Icons.TypeChangeInWorkdir_File_Icon }},
