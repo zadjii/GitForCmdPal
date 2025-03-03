@@ -4,6 +4,7 @@
 
 using System;
 using System.Linq;
+using GitExtension.Pages;
 using LibGit2Sharp;
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
@@ -63,7 +64,7 @@ internal sealed partial class PushCommand : InvokableCommand
         // Check if the current branch has an upstream (tracked branch)
         if (currentBranch.TrackedBranch == null)
         {
-            ExtensionHost.LogMessage("Current branch does not have an upstream configured.");
+            //ExtensionHost.LogMessage("Current branch does not have an upstream configured.");
             return new PushListPage(repo, currentBranch);
         }
 
@@ -83,7 +84,7 @@ internal sealed partial class PushCommand : InvokableCommand
         var prefix = $"refs/remotes/{remoteName}/";
         if (!trackedCanonical.StartsWith(prefix, StringComparison.CurrentCultureIgnoreCase))
         {
-            ExtensionHost.LogMessage("Unexpected upstream branch canonical name format.");
+            ExtensionHost.LogMessage($"Unexpected upstream branch canonical name format. '{trackedCanonical}'");
             return null;
         }
         var remoteBranchName = trackedCanonical[prefix.Length..];

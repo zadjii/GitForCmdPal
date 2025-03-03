@@ -8,8 +8,8 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Text;
-using System.Text.Json.Nodes;
+using System.Threading.Tasks;
+using GitExtension.Pages;
 using LibGit2Sharp;
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
@@ -132,9 +132,10 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
                 {
                     allCommands.Add(new(pushCommand) { Subtitle = commitsToPush > 0 ? $"{commitsToPush} ahead" : string.Empty });
                 }
-
             }
         }
+
+        allCommands.Add(new(new BranchListPage(_repo)) { Title = "Checkout...", Subtitle = "Switch branches" });
 
         allCommands.AddRange(items);
 
@@ -250,7 +251,7 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
                 Title = title,
                 Subtitle = subtitle,
                 Tags = tags.ToArray(),
-                Icon = GetFileIcon(file),
+                // Icon = GetFileIcon(file),
                 MoreCommands = [
                     ..remaining.Select(c => new CommandContextItem(c)),
                     new CommandContextItem(new OpenUrlCommand(fullPath)) { Title = "Open file" },
@@ -259,6 +260,8 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
                     new CommandContextItem(new ShowFileInFolderCommand(fullPath)) { Title = "Open in explorer" },
                 ],
             };
+
+            _ = Task.Run(() => { li.Icon = GetFileIcon(file); });
             return li;
         }
         catch (Exception e)
@@ -303,15 +306,24 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
         }
         catch { }
 
+        Title = $"{_repoData.Name} {BranchString(_repo)}";
         RaiseItemsChanged(-1);
 
     }
 
     private IconInfo? GetFileIcon(StatusEntry file)
     {
+
+        if (IsStagedChange(file))
+        {
+            return Icons.StagedFile;
+        }
+
         var path = Path.Combine(_repo.Info.WorkingDirectory, file.FilePath);
         path = Path.GetFullPath(path);
-        var stream = ThumbnailHelper.GetThumbnail(path).Result;
+        var t = ThumbnailHelper.GetThumbnail(path);
+        t.ConfigureAwait(false);
+        var stream = t.Result;
         if (stream != null)
         {
             var data = new IconData(RandomAccessStreamReference.CreateFromStream(stream));
@@ -329,7 +341,7 @@ internal sealed partial class StageCommand : InvokableCommand
     internal StageCommand(Repository repo, StatusEntry file)
     {
         Name = "Stage";
-        Icon = Icons.AddAll;
+        Icon = Icons.Add;
         _repo = repo;
         _file = file;
     }
@@ -415,116 +427,6 @@ internal sealed partial class PullCommand : InvokableCommand
     }
 }
 
-internal sealed partial class CommitPage : ContentPage
-{
-    private readonly Repository _repo;
-    private readonly CommitForm _form;
-    private readonly MarkdownContent _summary;
-    internal CommitPage(Repository repo)
-    {
-        Name = "Commit...";
-        Icon = Icons.Commit;
-        _repo = repo;
-        _form = new(_repo);
-
-        var statusText = new StringBuilder();
-        statusText.Append("# Status\n\n");
-        var status = _repo.RetrieveStatus();
-        foreach (var item in status.Staged)
-        {
-            statusText.Append(DisplayStatus(item));
-            statusText.Append("\n\n");
-        }
-        _summary = new MarkdownContent() { Body = statusText.ToString() };
-    }
-
-    public override IContent[] GetContent() => [_form, _summary];
-
-    internal static string DisplayStatus(StatusEntry file)
-    {
-        if ((file.State & FileStatus.RenamedInIndex) == FileStatus.RenamedInIndex ||
-            (file.State & FileStatus.RenamedInWorkdir) == FileStatus.RenamedInWorkdir)
-        {
-            var oldFilePath = ((file.State & FileStatus.RenamedInIndex) != 0)
-                ? file.HeadToIndexRenameDetails.OldFilePath
-                : file.IndexToWorkDirRenameDetails.OldFilePath;
-
-            return string.Format(CultureInfo.InvariantCulture, "{0}: {1} -> {2}", file.State, oldFilePath, file.FilePath);
-        }
-
-        return string.Format(CultureInfo.InvariantCulture, "{0}: {1}", file.State, file.FilePath);
-    }
-}
-internal sealed partial class CommitForm : FormContent
-{
-    private readonly Repository _repo;
-    internal CommitForm(Repository repo)
-    {
-        _repo = repo;
-
-        TemplateJson = """
-{
-    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-    "type": "AdaptiveCard",
-    "version": "1.5",
-    "body": [
-        {
-            "type": "Input.Text",
-            "style": "text",
-            "id": "title",
-            "label": "Title",
-            "value": "",
-            "placeholder": "Add a commit message",
-            "isRequired": true,
-            "errorMessage": "Message is required"
-        },
-        {
-            "type": "Input.Text",
-            "style": "text",
-            "id": "body",
-            "value": "",
-            "isMultiline": true,
-            "placeholder": "Add more details here",
-            "label": "Path to repo"
-        }
-    ],
-    "actions": [
-        {
-            "type": "Action.Submit",
-            "title": "Commit",
-            "data": {
-                "title": "title",
-                "body": "body"
-            }
-        }
-    ]
-}
-""";
-
-    }
-    public override ICommandResult SubmitForm(string inputs, string data)
-    {
-        var formInput = JsonNode.Parse(inputs);
-        if (formInput == null)
-        {
-            return CommandResult.KeepOpen();
-        }
-
-        // get the name and url out of the values
-        var title = formInput["title"]?.ToString() ?? string.Empty;
-        var body = formInput["body"]?.ToString() ?? string.Empty;
-        var fullMessage = string.IsNullOrEmpty(body) ? title : $"{title}\n\n{body.Replace('\r', '\n')}";
-
-        // Build the signature from the repo's configuration (username/email)
-        var signature = _repo.Config.BuildSignature(System.DateTimeOffset.Now);
-
-        // Create the commit
-        _ = _repo.Commit(fullMessage, signature, signature);
-
-        return CommandResult.GoBack();
-    }
-}
-
 // Stolen from toolkit 0.0.9
 public partial class ShowFileInFolderCommand : InvokableCommand
 {
@@ -556,83 +458,4 @@ public partial class ShowFileInFolderCommand : InvokableCommand
 
         return Result;
     }
-}
-
-
-internal sealed class Icons
-{
-    public static readonly IconInfo AppIcon = IconHelpers.FromRelativePath("Assets\\StoreLogo.scale-200.png");
-
-    public static readonly IconInfo Nonexistent_File_Icon = new("");
-    public static readonly IconInfo Unaltered_File_Icon = new("");
-    public static readonly IconInfo NewInIndex_File_Icon = new("");
-    public static readonly IconInfo ModifiedInIndex_File_Icon = new("");
-    public static readonly IconInfo DeletedFromIndex_File_Icon = new("");
-    public static readonly IconInfo RenamedInIndex_File_Icon = new("");
-    public static readonly IconInfo TypeChangeInIndex_File_Icon = new("");
-    public static readonly IconInfo NewInWorkdir_File_Icon = new("");
-    public static readonly IconInfo ModifiedInWorkdir_File_Icon = new("");
-    public static readonly IconInfo DeletedFromWorkdir_File_Icon = new("");
-    public static readonly IconInfo TypeChangeInWorkdir_File_Icon = new("");
-    public static readonly IconInfo RenamedInWorkdir_File_Icon = new("");
-    public static readonly IconInfo Conflicted_File_Icon = new("");
-
-
-    public static readonly IconInfo AddAll = new("\uED0E"); // SubscriptionAdd
-    public static readonly IconInfo AddNewRepo = new("\uED0E"); // SubscriptionAdd
-    public static readonly IconInfo Commit = new("\uE78C"); // SaveLocal
-
-    public static readonly IconInfo Push = new("\uE898"); // Upload
-    public static readonly IconInfo Pull = new("\uEBD3"); // CloudDownload
-
-}
-
-
-internal sealed class Statics
-{
-
-    public static readonly Dictionary<FileStatus, OptionalColor> StateColors = new()
-{
-    { FileStatus.Nonexistent, ColorHelpers.FromRgb(128, 128, 128) }, // Gray: not present #808080
-    { FileStatus.Unaltered,  ColorHelpers.FromRgb(255, 255, 255) }, // White: no changes #FFFFFF
-
-    { FileStatus.NewInIndex,  ColorHelpers.FromRgb(0, 255, 0) },     // Bright green: newly staged #00FF00
-    { FileStatus.ModifiedInIndex, ColorHelpers.FromRgb(0, 0, 255) },   // Blue: changes staged for commit #0000FF
-    { FileStatus.DeletedFromIndex, ColorHelpers.FromRgb(255, 0, 0) },  // Red: deletions staged #FF0000
-    { FileStatus.RenamedInIndex, ColorHelpers.FromRgb(255, 165, 0) },  // Orange: renamed files staged #FFA500
-    { FileStatus.TypeChangeInIndex, ColorHelpers.FromRgb(128, 0, 128) }, // Purple: type changes in the index #800080
-
-    { FileStatus.NewInWorkdir, ColorHelpers.FromRgb(144, 238, 144) },  // Light green: new files in workdir #90EE90
-    { FileStatus.ModifiedInWorkdir, ColorHelpers.FromRgb(255, 255, 0) }, // Yellow: modifications in workdir #FFFF00
-    { FileStatus.DeletedFromWorkdir, ColorHelpers.FromRgb(139, 0, 0) },  // Dark red: deletions in workdir #8B0000
-    { FileStatus.TypeChangeInWorkdir, ColorHelpers.FromRgb(255, 0, 255) }, // Magenta: type changes in workdir #FF00FF
-    { FileStatus.RenamedInWorkdir, ColorHelpers.FromRgb(255, 140, 0) },   // Dark orange: renamed files in workdir #FF8C00
-
-    { FileStatus.Conflicted, ColorHelpers.FromRgb(255, 20, 147) }        // Deep pink: conflicts need attention #FF1493
-};
-    public static readonly Dictionary<FileStatus, Microsoft.CommandPalette.Extensions.Toolkit.Tag> StateTags = new() {
-        // unexpected:
-        { FileStatus.Nonexistent, new Microsoft.CommandPalette.Extensions.Toolkit.Tag("nen-existent") { Foreground = StateColors[FileStatus.Nonexistent], Icon = Icons.Nonexistent_File_Icon }},
-        
-        // nothing
-        { FileStatus.Unaltered, new Microsoft.CommandPalette.Extensions.Toolkit.Tag("unchanged") { Foreground = StateColors[FileStatus.Unaltered], Icon = Icons.Unaltered_File_Icon }},
-
-        // staged
-        { FileStatus.NewInIndex, new Microsoft.CommandPalette.Extensions.Toolkit.Tag("added") { Foreground = StateColors[FileStatus.NewInIndex], Icon = Icons.NewInIndex_File_Icon }},
-        { FileStatus.ModifiedInIndex, new Microsoft.CommandPalette.Extensions.Toolkit.Tag("modified") { Foreground = StateColors[FileStatus.ModifiedInIndex], Icon = Icons.ModifiedInIndex_File_Icon }},
-        { FileStatus.DeletedFromIndex, new Microsoft.CommandPalette.Extensions.Toolkit.Tag("deleted") { Foreground = StateColors[FileStatus.DeletedFromIndex], Icon = Icons.DeletedFromIndex_File_Icon }},
-        { FileStatus.RenamedInIndex, new Microsoft.CommandPalette.Extensions.Toolkit.Tag("renamed") { Foreground = StateColors[FileStatus.RenamedInIndex], Icon = Icons.RenamedInIndex_File_Icon }},
-        { FileStatus.TypeChangeInIndex, new Microsoft.CommandPalette.Extensions.Toolkit.Tag("changed") { Foreground = StateColors[FileStatus.TypeChangeInIndex], Icon = Icons.TypeChangeInIndex_File_Icon }},
-    
-        // unstaged
-        { FileStatus.NewInWorkdir, new Microsoft.CommandPalette.Extensions.Toolkit.Tag("untracked") { Foreground = StateColors[FileStatus.NewInWorkdir], Icon = Icons.NewInWorkdir_File_Icon }},
-        { FileStatus.ModifiedInWorkdir, new Microsoft.CommandPalette.Extensions.Toolkit.Tag("modified") { Foreground = StateColors[FileStatus.ModifiedInWorkdir], Icon = Icons.ModifiedInWorkdir_File_Icon }},
-        { FileStatus.DeletedFromWorkdir, new Microsoft.CommandPalette.Extensions.Toolkit.Tag("deleted") { Foreground = StateColors[FileStatus.DeletedFromWorkdir], Icon = Icons.DeletedFromWorkdir_File_Icon }},
-        { FileStatus.TypeChangeInWorkdir, new Microsoft.CommandPalette.Extensions.Toolkit.Tag("renamed") { Foreground = StateColors[FileStatus.TypeChangeInWorkdir], Icon = Icons.TypeChangeInWorkdir_File_Icon }},
-        { FileStatus.RenamedInWorkdir, new Microsoft.CommandPalette.Extensions.Toolkit.Tag("changed") { Foreground = StateColors[FileStatus.RenamedInWorkdir], Icon = Icons.RenamedInWorkdir_File_Icon }},
-    
-        // conflicts
-        { FileStatus.Conflicted, new Microsoft.CommandPalette.Extensions.Toolkit.Tag("conflics") { Foreground = StateColors[FileStatus.Conflicted], Icon = Icons.Conflicted_File_Icon }},
- };
-    public static readonly Microsoft.CommandPalette.Extensions.Toolkit.Tag UhOhTag = new("uh oh edge case");
 }
