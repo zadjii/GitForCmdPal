@@ -32,6 +32,11 @@ internal sealed partial class CommitPage : ContentPage
             statusText.Append(DisplayStatus(item));
             statusText.Append("\n\n");
         }
+        foreach (var item in status.Added)
+        {
+            statusText.Append(DisplayStatus(item));
+            statusText.Append("\n\n");
+        }
         _summary = new MarkdownContent() { Body = statusText.ToString() };
     }
 
