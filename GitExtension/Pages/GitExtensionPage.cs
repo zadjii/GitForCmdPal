@@ -4,10 +4,10 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using GitExtension.Pages;
 using LibGit2Sharp;
@@ -21,7 +21,12 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
 {
     private readonly RepoData _repoData;
     private readonly Repository _repo;
+
     private readonly FileSystemWatcher _watcher;
+    private Timer? _debounceTimer;
+    private const int DebounceDelay = 250; // milliseconds
+    private readonly object _timerLock = new();
+
 
     public GitExtensionPage(RepoData repo)
     {
@@ -44,10 +49,10 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
             NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName
         };
 
-        _watcher.Changed += OnRepoChanged;
-        _watcher.Created += OnRepoChanged;
-        _watcher.Deleted += OnRepoChanged;
-        _watcher.Renamed += OnRepoChanged;
+        _watcher.Changed += OnFilesystemChanged;
+        _watcher.Created += OnFilesystemChanged;
+        _watcher.Deleted += OnFilesystemChanged;
+        _watcher.Renamed += OnFilesystemChanged;
 
         _watcher.EnableRaisingEvents = true;
     }
@@ -145,8 +150,9 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
 
     internal static string StagedSubtitle(RepositoryStatus status)
     {
+
         return string.Format(CultureInfo.InvariantCulture,
-                                "Added {0} Modified {1} Removed {2} ",
+                                "Added {0}, Modified {1}, Removed {2} ",
                                 status.Added.Count(),
                                 status.Staged.Count(),
                                 status.Removed.Count());
@@ -290,7 +296,8 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
         }
     }
 
-    private void OnRepoChanged(object sender, FileSystemEventArgs e)
+
+    private void OnFilesystemChanged(object sender, FileSystemEventArgs e)
     {
         try
         {
@@ -306,9 +313,39 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
         }
         catch { }
 
+        // Reset the debounce timer each time an event is fired
+        lock (_timerLock)
+        {
+            if (_debounceTimer != null)
+            {
+                _debounceTimer.Change(DebounceDelay, Timeout.Infinite);
+            }
+            else
+            {
+                _debounceTimer = new Timer(OnDebounceTimerElapsed, null, DebounceDelay, Timeout.Infinite);
+            }
+        }
+    }
+
+    private void OnDebounceTimerElapsed(object? state)
+    {
+        // Safely dispose of the timer and set to null
+        lock (_timerLock)
+        {
+            _debounceTimer?.Dispose();
+            _debounceTimer = null;
+        }
+
+        // Now, handle the debounced event (250ms after the last event)
+        // Place additional event handling logic here.
+        OnRepoChanged();
+    }
+
+    private void OnRepoChanged()
+    {
+
         Title = $"{_repoData.Name} {BranchString(_repo)}";
         RaiseItemsChanged(-1);
-
     }
 
     private IconInfo? GetFileIcon(StatusEntry file)
@@ -334,128 +371,4 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
     }
 }
 
-internal sealed partial class StageCommand : InvokableCommand
-{
-    private readonly Repository _repo;
-    private readonly StatusEntry _file;
-    internal StageCommand(Repository repo, StatusEntry file)
-    {
-        Name = "Stage";
-        Icon = Icons.Add;
-        _repo = repo;
-        _file = file;
-    }
-    public override ICommandResult Invoke()
-    {
-        Commands.Stage(_repo, _file.FilePath);
 
-        return CommandResult.KeepOpen();
-    }
-}
-
-internal sealed partial class UnstageCommand : InvokableCommand
-{
-    private readonly Repository _repo;
-    private readonly StatusEntry _file;
-    internal UnstageCommand(Repository repo, StatusEntry file)
-    {
-        Name = "Unstage";
-        _repo = repo;
-        _file = file;
-    }
-    public override ICommandResult Invoke()
-    {
-        Commands.Unstage(_repo, _file.FilePath);
-
-        return CommandResult.KeepOpen();
-    }
-}
-
-internal sealed partial class AddAllCommand : InvokableCommand
-{
-    private readonly Repository _repo;
-    internal AddAllCommand(Repository repo)
-    {
-        Name = "Add all";
-        Icon = Icons.AddAll;
-        _repo = repo;
-    }
-    public override ICommandResult Invoke()
-    {
-        Commands.Stage(_repo, "*");
-
-        return CommandResult.KeepOpen();
-    }
-}
-internal sealed partial class UnstageAllCommand : InvokableCommand
-{
-    private readonly Repository _repo;
-    internal UnstageAllCommand(Repository repo)
-    {
-        Name = "Unstage all";
-        Icon = Icons.AddAll;
-        _repo = repo;
-    }
-    public override ICommandResult Invoke()
-    {
-        Commands.Unstage(_repo, "*");
-
-        return CommandResult.KeepOpen();
-    }
-}
-
-internal sealed partial class PullCommand : InvokableCommand
-{
-    private readonly Repository _repo;
-    internal PullCommand(Repository repo)
-    {
-        Name = "Pull";
-        Icon = Icons.Pull;
-        _repo = repo;
-    }
-    public override ICommandResult Invoke()
-    {
-        var options = new LibGit2Sharp.PullOptions
-        {
-            FetchOptions = new FetchOptions()
-        };
-        var signature = _repo.Config.BuildSignature(System.DateTimeOffset.Now);
-
-        Commands.Pull(_repo, signature, options);
-
-        return CommandResult.KeepOpen();
-    }
-}
-
-// Stolen from toolkit 0.0.9
-public partial class ShowFileInFolderCommand : InvokableCommand
-{
-    private readonly string _path;
-    private static readonly IconInfo Ico = new("\uE838");
-
-    public CommandResult Result { get; set; } = CommandResult.GoHome();
-
-    internal ShowFileInFolderCommand(string path)
-    {
-        _path = path;
-        Name = "Show in folder";
-        Icon = Ico;
-    }
-
-    public override CommandResult Invoke()
-    {
-        if (File.Exists(_path))
-        {
-            try
-            {
-                var argument = "/select, \"" + _path + "\"";
-                Process.Start("explorer.exe", argument);
-            }
-            catch (System.Exception)
-            {
-            }
-        }
-
-        return Result;
-    }
-}
