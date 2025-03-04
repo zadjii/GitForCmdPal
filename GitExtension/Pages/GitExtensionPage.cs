@@ -7,6 +7,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using GitExtension.Pages;
@@ -34,6 +36,7 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
 
         Icon = Icons.AppIcon;
         Name = "Open";
+        ShowDetails = true;
 
         var repoPath = _repoData.Path;
 
@@ -93,10 +96,19 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
         IsLoading = true;
         var status = _repo.RetrieveStatus();
 
+        // Get the HEAD commit's tree to compare against the working directory.
+        var headTree = _repo.Head.Tip.Tree;
+
+        // Generate a patch comparing the HEAD commit to the working directory for the specific file.
+        var patch = _repo.Diff.Compare<Patch>(
+            headTree,
+            DiffTargets.WorkingDirectory
+        );
+
         var items = status
             .Where(entry => entry.State is not FileStatus.Unaltered and not FileStatus.Ignored)
             .OrderBy(entry => entry.State)
-            .Select(FileTolistItem)
+            .Select(file => FileTolistItem(file, patch))
             .Where(item => item != null)
             .Select(i => i!);
 
@@ -114,6 +126,7 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
             allCommands.Add(new(new CommitPage(_repo)) { Subtitle = $"{StagedSubtitle(status)} {BranchString(_repo)}" });
             allCommands.Add(new(new UnstageAllCommand(_repo)));
         }
+
 
         if (_repo.Head is Branch currentBranch)
         {
@@ -180,7 +193,7 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
             state.HasFlag(FileStatus.TypeChangeInIndex);
     }
 
-    private ListItem? FileTolistItem(StatusEntry file)
+    private ListItem? FileTolistItem(StatusEntry file, Patch patch)
     {
         List<Microsoft.CommandPalette.Extensions.Toolkit.Tag> tags = [];
         List<Microsoft.CommandPalette.Extensions.Toolkit.Command> commands = [];
@@ -252,11 +265,46 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
             var defaultCommand = commands.FirstOrDefault(new NoOpCommand());
             var remaining = commands.Skip(1);
 
+            Details? details = null;
+            // Retrieve the diff for the specified file.            
+            if (patch[file.FilePath] is PatchEntryChanges fileDiff)
+            {
+                // Retrieve the full diff text.
+                var patchText = fileDiff.Patch;
+
+                // Split the diff text into chunks. 
+                // The regex splits on lines that start with @@, preserving those lines with a positive lookahead.
+                var hunks = Regex.Split(patchText, @"(?=^@@)", RegexOptions.Multiline);
+
+                var markdownDiff = new StringBuilder();
+
+                // For each chunk, wrap it in its own Markdown code block.
+                foreach (var hunk in hunks)
+                {
+                    // Trim to avoid empty code blocks.
+                    if (string.IsNullOrWhiteSpace(hunk))
+                    {
+                        continue;
+                    }
+
+                    markdownDiff.AppendLine("```diff");
+                    markdownDiff.AppendLine(hunk.TrimEnd());
+                    markdownDiff.AppendLine("```");
+                    markdownDiff.AppendLine();
+                }
+
+                details = new Details() { Body = markdownDiff.ToString() };
+            }
+            else
+            {
+            }
+
             var li = new ListItem(defaultCommand)
             {
                 Title = title,
                 Subtitle = subtitle,
                 Tags = tags.ToArray(),
+                Details = details,
                 // Icon = GetFileIcon(file),
                 MoreCommands = [
                     ..remaining.Select(c => new CommandContextItem(c)),
