@@ -9,6 +9,9 @@ namespace GitExtension.Pages;
 internal sealed class Icons
 {
     public static readonly IconInfo AppIcon = IconHelpers.FromRelativePath("Assets\\StoreLogo.scale-200.png");
+    public static readonly IconInfo VsCodeIcon = IconHelpers.FromRelativePath("Assets\\visual-studio-code-icons\\vscode.svg");
+    public static readonly IconInfo ExplorerIcon = new("c:\\Windows\\explorer.exe");
+    public static readonly IconInfo AddRepoIcon = IconHelpers.FromRelativePath("Assets\\svg\\OpenLocalGitRepo.svg");
 
     public static readonly IconInfo Nonexistent_File_Icon = new("");
     public static readonly IconInfo Unaltered_File_Icon = new("");
@@ -30,7 +33,9 @@ internal sealed class Icons
     public static readonly IconInfo AddNewRepo = new("\uED0E"); // SubscriptionAdd
     public static readonly IconInfo StagedFile = new("\uE73A"); // CheckboxComposite
 
+    // IconHelpers.FromRelativePath("Assets\\svg\\Commit.svg");
     public static readonly IconInfo Commit = new("\uE78C"); // SaveLocal
+    public static readonly IconInfo CreateBranch = IconHelpers.FromRelativePath("Assets\\svg\\NewBranch.svg");
 
     public static readonly IconInfo Push = new("\uE898"); // Upload
     public static readonly IconInfo Pull = new("\uEBD3"); // CloudDownload

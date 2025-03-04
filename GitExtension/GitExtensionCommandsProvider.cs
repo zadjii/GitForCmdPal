@@ -4,14 +4,13 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using GitExtension.Pages;
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
-using Windows.Foundation;
 
 namespace GitExtension;
 
@@ -52,11 +51,28 @@ public partial class GitExtensionCommandsProvider : CommandProvider
         }
 
         _repoCommands.Clear();
+
+        var hasVsCode = IsVSCodeInstalled();
+
         foreach (var repo in _state.Repos)
         {
             var page = new GitExtensionPage(repo);
-            var li = new ListItem(page) { Title = repo.Name, Subtitle = repo.Path };
-            _repoCommands.Add(li);
+            List<CommandContextItem> contextItems = [];
+            var openExplorer = new OpenUrlCommand(repo.Path) { Icon = Icons.ExplorerIcon, Name = "Open path" };
+            contextItems.Add(new CommandContextItem(openExplorer));
+            if (hasVsCode)
+            {
+                var openCodeCommand = new CommandContextItem(new OpenInCodeCommand(repo.Path));
+                contextItems.Add(openCodeCommand);
+            }
+            var ci = new CommandItem(page)
+            {
+                Title = repo.Name,
+                Subtitle = repo.Path,
+                Icon = page.Icon,
+                MoreCommands = [.. contextItems],
+            };
+            _repoCommands.Add(ci);
         }
     }
     internal static string StateJsonPath()
@@ -67,102 +83,47 @@ public partial class GitExtensionCommandsProvider : CommandProvider
         // now, the state is just next to the exe
         return System.IO.Path.Combine(directory, "state.json");
     }
-}
 
-
-internal sealed partial class AddRepoPage : ContentPage
-{
-    private readonly AddRepoForm _addRepo;
-
-    public AddRepoPage()
+    private static bool IsVSCodeInstalled()
     {
-        _addRepo = new AddRepoForm();
-        Name = "Open";
-        Icon = Icons.AddNewRepo;
-    }
-    internal event TypedEventHandler<object, object?>? AddedCommand
-    {
-        add => _addRepo.AddedCommand += value;
-        remove => _addRepo.AddedCommand -= value;
-    }
-    public override IContent[] GetContent() => [_addRepo];
-}
-
-internal sealed partial class AddRepoForm : FormContent
-{
-    internal event TypedEventHandler<object, object?>? AddedCommand;
-
-    public AddRepoForm(string name = "", string url = "")
-    {
-        TemplateJson = $$"""
-{
-    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-    "type": "AdaptiveCard",
-    "version": "1.5",
-    "body": [
+        try
         {
-            "type": "Input.Text",
-            "style": "text",
-            "id": "name",
-            "label": "Name",
-            "value": {{JsonSerializer.Serialize(name, JsonSerializationContext.Default.String)}},
-            "isRequired": true,
-            "errorMessage": "Name is required"
-        },
-        {
-            "type": "Input.Text",
-            "style": "text",
-            "id": "path",
-            "value": {{JsonSerializer.Serialize(url, JsonSerializationContext.Default.String)}},
-            "label": "Path to repo",
-            "isRequired": true,
-            "errorMessage": "File path is required"
+            var psi = new ProcessStartInfo
+            {
+                FileName = "where",
+                Arguments = "code",
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(psi);
+            var output = process?.StandardOutput.ReadToEnd() ?? string.Empty;
+            process?.WaitForExit();
+            return !string.IsNullOrWhiteSpace(output);
         }
-    ],
-    "actions": [
+        catch (Exception)
         {
-            "type": "Action.Submit",
-            "title": "Save",
-            "data": {
-                "name": "name",
-                "path": "path"
-            }
+            return false;
         }
-    ]
-}
-""";
     }
+}
 
-    public override CommandResult SubmitForm(string payload)
+internal sealed partial class OpenInCodeCommand : InvokableCommand
+{
+    private readonly string _path;
+    internal OpenInCodeCommand(string path)
     {
-        var formInput = JsonNode.Parse(payload);
-        if (formInput == null)
-        {
-            return CommandResult.GoHome();
-        }
-
-        // get the name and url out of the values
-        var formName = formInput["name"] ?? string.Empty;
-        var formPath = formInput["path"] ?? string.Empty;
-
-
-        var formData = new RepoData()
-        {
-            Name = formName.ToString(),
-            Path = formPath.ToString(),
-        };
-
-        // Construct a new json blob with the name and url
-        var jsonPath = GitExtensionCommandsProvider.StateJsonPath();
-        var state = AppState.ReadFromFile(jsonPath);
-        state.Repos.Add(formData);
-        AppState.WriteToFile(state);
-
-        AddedCommand?.Invoke(this, null);
-        return CommandResult.GoHome();
+        _path = path;
+        Name = "Open in VsCode";
+        Icon = Icons.VsCodeIcon;
+    }
+    public override ICommandResult Invoke()
+    {
+        Process.Start("code", _path);
+        return CommandResult.Dismiss();
     }
 }
-
 
 public sealed class AppState
 {

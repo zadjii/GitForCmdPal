@@ -65,7 +65,7 @@ internal sealed partial class NewBranchPage : ContentPage
     internal NewBranchPage(Repository repo)
     {
         Name = "New branch...";
-        Icon = Icons.Add;
+        Icon = Icons.Add; //Icons.CreateBranch;
         _repo = repo;
         _form = new(_repo);
     }

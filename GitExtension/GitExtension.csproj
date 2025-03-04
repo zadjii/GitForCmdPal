@@ -22,6 +22,11 @@
     <Content Include="Assets\Square44x44Logo.scale-200.png" />
     <Content Include="Assets\Square44x44Logo.targetsize-24_altform-unplated.png" />
     <Content Include="Assets\Wide310x150Logo.scale-200.png" />
+
+    <!-- <Content Include="Assets/visual-studio-code-icons/vscode.svg" /> -->
+    <!-- <Content Include="Assets/visual-studio-code-icons/vscode-alt.png" /> -->
+    <!-- <Content Include="Assets/visual-studio-code-icons/vscode-alt.svg" /> -->
+    <!-- <Content Include="Assets/visual-studio-code-icons/vscode.png" /> -->
   </ItemGroup>
 
   <ItemGroup>
