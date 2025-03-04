@@ -3,6 +3,7 @@
 // See the LICENSE file in the project root for more information.
 
 using System.Globalization;
+using System.Linq;
 using System.Text;
 using System.Text.Json.Nodes;
 using GitExtension.Pages;
@@ -27,15 +28,25 @@ internal sealed partial class CommitPage : ContentPage
         var statusText = new StringBuilder();
         statusText.Append("# Status\n\n");
         var status = _repo.RetrieveStatus();
-        foreach (var item in status.Staged)
+        if (status.Staged.Any())
         {
-            statusText.Append(DisplayStatus(item));
-            statusText.Append("\n\n");
+            statusText.Append("### Modified\n\n```\n\n");
+            foreach (var item in status.Staged)
+            {
+                statusText.Append(DisplayStatus(item));
+                statusText.Append('\n');
+            }
+            statusText.Append("```\n\n");
         }
-        foreach (var item in status.Added)
+        if (status.Added.Any())
         {
-            statusText.Append(DisplayStatus(item));
-            statusText.Append("\n\n");
+            statusText.Append("### Added\n\n```\n\n");
+            foreach (var item in status.Added)
+            {
+                statusText.Append(DisplayStatus(item));
+                statusText.Append('\n');
+            }
+            statusText.Append("```\n\n");
         }
         _summary = new MarkdownContent() { Body = statusText.ToString() };
     }
@@ -51,10 +62,10 @@ internal sealed partial class CommitPage : ContentPage
                 ? file.HeadToIndexRenameDetails.OldFilePath
                 : file.IndexToWorkDirRenameDetails.OldFilePath;
 
-            return string.Format(CultureInfo.InvariantCulture, "{0}: {1} -> {2}", file.State, oldFilePath, file.FilePath);
+            return string.Format(CultureInfo.InvariantCulture, "{1} -> {2}", file.State, oldFilePath, file.FilePath);
         }
 
-        return string.Format(CultureInfo.InvariantCulture, "{0}: {1}", file.State, file.FilePath);
+        return string.Format(CultureInfo.InvariantCulture, "{1}", file.State, file.FilePath);
     }
 }
 

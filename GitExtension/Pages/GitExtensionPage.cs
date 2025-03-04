@@ -111,7 +111,7 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
         }
         if (stagedChanges.Any())
         {
-            allCommands.Add(new(new CommitPage(_repo)) { Subtitle = $"{StagedSubtitle(status)} on {BranchString(_repo)}" });
+            allCommands.Add(new(new CommitPage(_repo)) { Subtitle = $"{StagedSubtitle(status)} {BranchString(_repo)}" });
             allCommands.Add(new(new UnstageAllCommand(_repo)));
         }
 
