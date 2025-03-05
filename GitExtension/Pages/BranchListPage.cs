@@ -43,7 +43,15 @@ internal sealed partial class BranchListPage : ListPage
             name: isCurrent ? "Current" : "Checkout",
             action: () =>
             {
-                Commands.Checkout(_repo, b);
+                try
+                {
+                    Commands.Checkout(_repo, b);
+                }
+                catch (CheckoutConflictException e)
+                {
+                    ToastStatusMessage toast = new(new StatusMessage() { Message = e.Message, State = MessageState.Error });
+                    toast.Show();
+                }
             },
             result: CommandResult.GoBack())
         {
