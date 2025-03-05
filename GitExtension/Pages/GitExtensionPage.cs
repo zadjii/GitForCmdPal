@@ -265,35 +265,43 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
             var defaultCommand = commands.FirstOrDefault(new NoOpCommand());
             var remaining = commands.Skip(1);
 
-            Details? details = null;
+            //Details? details = null;
+            LazyDetails? lazyDetails = null;
             // Retrieve the diff for the specified file.            
             if (patch[file.FilePath] is PatchEntryChanges fileDiff)
             {
-                // Retrieve the full diff text.
-                var patchText = fileDiff.Patch;
-
-                // Split the diff text into chunks. 
-                // The regex splits on lines that start with @@, preserving those lines with a positive lookahead.
-                var hunks = Regex.Split(patchText, @"(?=^@@)", RegexOptions.Multiline);
-
-                var markdownDiff = new StringBuilder();
-
-                // For each chunk, wrap it in its own Markdown code block.
-                foreach (var hunk in hunks)
+                string gitDiffBody()
                 {
-                    // Trim to avoid empty code blocks.
-                    if (string.IsNullOrWhiteSpace(hunk))
-                    {
-                        continue;
-                    }
+                    // Retrieve the full diff text.
+                    var patchText = fileDiff.Patch;
 
-                    markdownDiff.AppendLine("```diff");
-                    markdownDiff.AppendLine(hunk.TrimEnd());
-                    markdownDiff.AppendLine("```");
-                    markdownDiff.AppendLine();
+                    // Split the diff text into chunks. 
+                    // The regex splits on lines that start with @@, preserving those lines with a positive lookahead.
+                    var hunks = Regex.Split(patchText, @"(?=^@@)", RegexOptions.Multiline);
+
+                    var markdownDiff = new StringBuilder();
+
+                    // For each chunk, wrap it in its own Markdown code block.
+                    foreach (var hunk in hunks)
+                    {
+                        // Trim to avoid empty code blocks.
+                        if (string.IsNullOrWhiteSpace(hunk))
+                        {
+                            continue;
+                        }
+
+                        markdownDiff.AppendLine("```diff");
+                        markdownDiff.AppendLine(hunk.TrimEnd());
+                        markdownDiff.AppendLine("```");
+                        markdownDiff.AppendLine();
+                    }
+                    return markdownDiff.ToString();
                 }
 
-                details = new Details() { Body = markdownDiff.ToString() };
+                lazyDetails = new()
+                {
+                    Body = new(gitDiffBody),
+                };
             }
             else
             {
@@ -304,7 +312,7 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
                 Title = title,
                 Subtitle = subtitle,
                 Tags = tags.ToArray(),
-                Details = details,
+                Details = lazyDetails,
                 // Icon = GetFileIcon(file),
                 MoreCommands = [
                     ..remaining.Select(c => new CommandContextItem(c)),
