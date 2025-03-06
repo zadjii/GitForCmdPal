@@ -52,28 +52,53 @@ public partial class GitExtensionCommandsProvider : CommandProvider
 
         _repoCommands.Clear();
 
-        var hasVsCode = IsVSCodeInstalled();
-
         foreach (var repo in _state.Repos)
         {
             var page = new GitExtensionPage(repo);
-            List<CommandContextItem> contextItems = [];
-            var openExplorer = new OpenUrlCommand(repo.Path) { Icon = Icons.ExplorerIcon, Name = "Open path" };
-            contextItems.Add(new CommandContextItem(openExplorer));
-            if (hasVsCode)
-            {
-                var openCodeCommand = new CommandContextItem(new OpenInCodeCommand(repo.Path));
-                contextItems.Add(openCodeCommand);
-            }
             var ci = new CommandItem(page)
             {
                 Title = repo.Name,
                 Subtitle = repo.Path,
                 Icon = page.Icon,
-                MoreCommands = [.. contextItems],
+                MoreCommands = [.. ContextMenuForRepo(repo)],
             };
             _repoCommands.Add(ci);
         }
+    }
+
+    internal static List<CommandContextItem> ContextMenuForRepo(RepoData repo)
+    {
+        List<CommandContextItem> contextItems = [];
+
+        var openExplorer = new OpenUrlCommand(repo.Path) { Icon = Icons.ExplorerIcon, Name = "Open path" };
+        contextItems.Add(new CommandContextItem(openExplorer));
+
+        if (TerminalIsInstalled.Value)
+        {
+            var openInTerminal = new CommandContextItem(
+                title: "Open in Terminal",
+                name: "Open in Terminal",
+                action: () => ShellHelpers.OpenInShell("wt.exe", $"-d \"{repo.Path}\""),
+                result: CommandResult.Dismiss()
+                )
+            {
+                Icon = Icons.TerminalIcon,
+            };
+            contextItems.Add(openInTerminal);
+        }
+        if (VsCodeIsInstalled.Value)
+        {
+            var openCodeCommand = new CommandContextItem(new OpenInCodeCommand(repo.Path));
+            contextItems.Add(openCodeCommand);
+        }
+        var slns = GetSolutionFiles(repo.Path);
+        foreach (var s in slns)
+        {
+            var cmd = new OpenUrlCommand(s) { Icon = Icons.VisualStudioIcon, Name = $"Open {Path.GetFileName(s)}" };
+            contextItems.Add(new CommandContextItem(cmd));
+        }
+
+        return contextItems;
     }
     internal static string StateJsonPath()
     {
@@ -84,6 +109,9 @@ public partial class GitExtensionCommandsProvider : CommandProvider
         return System.IO.Path.Combine(directory, "state.json");
     }
 
+    // Eh, this won't hot-reload if you install vscode, but whatever
+    private static readonly Lazy<bool> VsCodeIsInstalled = new(IsVSCodeInstalled);
+    private static readonly Lazy<bool> TerminalIsInstalled = new(IsTerminalInstalled);
     private static bool IsVSCodeInstalled()
     {
         try
@@ -106,6 +134,44 @@ public partial class GitExtensionCommandsProvider : CommandProvider
         {
             return false;
         }
+    }
+    private static bool IsTerminalInstalled()
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "where",
+                Arguments = "wt",
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(psi);
+            var output = process?.StandardOutput.ReadToEnd() ?? string.Empty;
+            process?.WaitForExit();
+            return !string.IsNullOrWhiteSpace(output);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    public static List<string> GetSolutionFiles(string directoryPath, bool searchSubdirectories = false)
+    {
+        if (!Directory.Exists(directoryPath))
+        {
+            return [];
+        }
+
+        // Use the SearchOption based on whether we want to search subdirectories.
+        var option = searchSubdirectories ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
+
+        // Get all .sln files and return them as a list.
+        var files = Directory.GetFiles(directoryPath, "*.sln", option);
+        return [.. files];
     }
 }
 

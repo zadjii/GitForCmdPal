@@ -59,6 +59,17 @@ internal sealed partial class StatusPage : ListPage, System.IDisposable
         _watcher.Renamed += OnFilesystemChanged;
 
         _watcher.EnableRaisingEvents = true;
+
+        var emptyCommands = GitExtensionCommandsProvider.ContextMenuForRepo(_repoData);
+
+        EmptyContent = new CommandItem()
+        {
+            Title = "No changes",
+            Subtitle = "nothing to commit, working tree clean",
+            Icon = Icons.Completed,
+            Command = emptyCommands.First().Command,
+            MoreCommands = emptyCommands.Skip(1).ToArray()
+        };
     }
 
     public override IListItem[] GetItems()
@@ -66,6 +77,13 @@ internal sealed partial class StatusPage : ListPage, System.IDisposable
         IsLoading = true;
         var status = _repo.RetrieveStatus();
 
+        var modifiedItems = status
+            .Where(entry => entry.State is not FileStatus.Unaltered and not FileStatus.Ignored);
+        if (!modifiedItems.Any())
+        {
+            IsLoading = false;
+            return [];
+        }
         // Get the HEAD commit's tree to compare against the working directory.
         var headTree = _repo.Head.Tip.Tree;
 
@@ -84,8 +102,7 @@ internal sealed partial class StatusPage : ListPage, System.IDisposable
             return [];
         }
 
-        var items = status
-            .Where(entry => entry.State is not FileStatus.Unaltered and not FileStatus.Ignored)
+        var items = modifiedItems
             .OrderBy(entry => entry.State)
             .Select(file => FileTolistItem(file, patch))
             .Where(item => item != null)

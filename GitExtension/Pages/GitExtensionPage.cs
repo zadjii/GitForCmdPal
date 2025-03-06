@@ -116,13 +116,6 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
             .Where(item => item != null)
             .Select(i => i!);
 
-
-        //if (!items.Any())
-        //{
-        //    // set the empty content and return
-        //}
-
-
         List<ListItem> allCommands = [];
 
         _statusItem.Subtitle = $"{StagedSubtitle(status)} {BranchString(_repo)}";
