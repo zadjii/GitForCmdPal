@@ -17,7 +17,7 @@ internal sealed partial class CommitPage : ContentPage
 {
     private readonly Repository _repo;
     private readonly CommitForm _form;
-    private readonly MarkdownContent _summary;
+    //private readonly MarkdownContent _summary;
     internal CommitPage(Repository repo)
     {
         Name = "Commit...";
@@ -25,6 +25,10 @@ internal sealed partial class CommitPage : ContentPage
         _repo = repo;
         _form = new(_repo);
 
+    }
+
+    public override IContent[] GetContent()
+    {
         var statusText = new StringBuilder();
         statusText.Append("# Status\n\n");
         var status = _repo.RetrieveStatus();
@@ -48,10 +52,9 @@ internal sealed partial class CommitPage : ContentPage
             }
             statusText.Append("```\n\n");
         }
-        _summary = new MarkdownContent() { Body = statusText.ToString() };
+        var summary = new MarkdownContent() { Body = statusText.ToString() };
+        return [_form, summary];
     }
-
-    public override IContent[] GetContent() => [_form, _summary];
 
     internal static string DisplayStatus(StatusEntry file)
     {
@@ -100,7 +103,7 @@ internal sealed partial class CommitForm : FormContent
             "value": "",
             "isMultiline": true,
             "placeholder": "Add more details here",
-            "label": "Path to repo"
+            "label": "Commit details"
         }
     ],
     "actions": [

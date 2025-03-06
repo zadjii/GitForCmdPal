@@ -118,7 +118,15 @@ internal sealed partial class PushListPage : ListPage
                     subtitle: r.Url,
                     action: () =>
                     {
-                        _repo.Network.Push(r, _branch.CanonicalName);
+                        try
+                        {
+                            _repo.Network.Push(r, _branch.CanonicalName);
+                        }
+                        catch (LibGit2Sharp.LibGit2SharpException e)
+                        {
+                            ToastStatusMessage toast = new(new StatusMessage() { Message = e.Message, State = MessageState.Error });
+                            toast.Show();
+                        }
                     },
                     result: CommandResult.GoBack())
                 {

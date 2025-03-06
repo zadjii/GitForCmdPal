@@ -5,17 +5,11 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.IO;
 using System.Linq;
-using System.Text;
-using System.Text.RegularExpressions;
-using System.Threading;
-using System.Threading.Tasks;
 using GitExtension.Pages;
 using LibGit2Sharp;
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
-using Windows.Storage.Streams;
 
 namespace GitExtension;
 
@@ -24,10 +18,21 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
     private readonly RepoData _repoData;
     private readonly Repository _repo;
 
-    private readonly FileSystemWatcher _watcher;
-    private Timer? _debounceTimer;
-    private const int DebounceDelay = 250; // milliseconds
-    private readonly object _timerLock = new();
+    private readonly StatusPage _statusPage;
+    private readonly AddAllCommand _addAllCommand;
+    private readonly CommitPage _commitPage;
+    private readonly UnstageAllCommand _unstageAllCommand;
+    private readonly PullCommand _pullCommand;
+    //private PushCommand? _pushCommand;
+    private readonly BranchListPage _branchListPage;
+
+    private readonly ListItem _statusItem;
+    private readonly ListItem _addAllItem;
+    private readonly ListItem _commitItem;
+    private readonly ListItem _unstageAllItem;
+    private readonly ListItem _pullItem;
+    //private ListItem? _pushItem;
+    private readonly ListItem _branchListItem;
 
 
     public GitExtensionPage(RepoData repo)
@@ -44,20 +49,25 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
 
         Title = $"{repo.Name} {BranchString(_repo)}";
 
-        _watcher = new FileSystemWatcher
-        {
-            Path = repoPath,
-            Filter = "*.*",
-            IncludeSubdirectories = true,
-            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName
-        };
+        //_watcher.EnableRaisingEvents = true;
+        _statusPage = new StatusPage(_repoData, _repo);
+        _addAllCommand = new AddAllCommand(_repo);
+        _commitPage = new CommitPage(_repo);
+        _unstageAllCommand = new(_repo);
+        _pullCommand = new PullCommand(_repo);
+        //_pushCommand = null;
+        _branchListPage = new BranchListPage(_repo);
 
-        _watcher.Changed += OnFilesystemChanged;
-        _watcher.Created += OnFilesystemChanged;
-        _watcher.Deleted += OnFilesystemChanged;
-        _watcher.Renamed += OnFilesystemChanged;
+        _statusItem = new(_statusPage) { Title = "Status" };
+        _addAllItem = new(_addAllCommand);
+        _commitItem = new(_commitPage);
+        _unstageAllItem = new(_unstageAllCommand);
+        _pullItem = new(_pullCommand);
+        //_pushItem = new(_pushCommand);
+        _branchListItem = new(_branchListPage) { Title = "Checkout...", Subtitle = "Switch branches" };
 
-        _watcher.EnableRaisingEvents = true;
+        _statusPage.StatusChanged += (s, e) => OnRepoChanged();
+
     }
 
     internal static Branch? CurrentBranch(Repository repo)
@@ -99,32 +109,37 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
         // Get the HEAD commit's tree to compare against the working directory.
         var headTree = _repo.Head.Tip.Tree;
 
-        // Generate a patch comparing the HEAD commit to the working directory for the specific file.
-        var patch = _repo.Diff.Compare<Patch>(
-            headTree,
-            DiffTargets.WorkingDirectory
-        );
-
         var items = status
             .Where(entry => entry.State is not FileStatus.Unaltered and not FileStatus.Ignored)
-            .OrderBy(entry => entry.State)
-            .Select(file => FileTolistItem(file, patch))
+            //.OrderBy(entry => entry.State)
+            //.Select(file => FileTolistItem(file, patch))
             .Where(item => item != null)
             .Select(i => i!);
 
+
+        //if (!items.Any())
+        //{
+        //    // set the empty content and return
+        //}
+
+
         List<ListItem> allCommands = [];
+
+        _statusItem.Subtitle = $"{StagedSubtitle(status)} {BranchString(_repo)}";
+        _statusItem.Tags = StatusTags(status).ToArray();
+        allCommands.Add(_statusItem);
 
         var unstagedChanges = status.Where(IsUnstagedChange);
         var stagedChanges = status.Where(IsStagedChange);
 
         if (unstagedChanges.Any())
         {
-            allCommands.Add(new(new AddAllCommand(_repo)));
+            allCommands.Add(_addAllItem);
         }
         if (stagedChanges.Any())
         {
-            allCommands.Add(new(new CommitPage(_repo)) { Subtitle = $"{StagedSubtitle(status)} {BranchString(_repo)}" });
-            allCommands.Add(new(new UnstageAllCommand(_repo)));
+            allCommands.Add(_commitItem);
+            allCommands.Add(_unstageAllItem);
         }
 
 
@@ -141,7 +156,8 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
 
             if (commitsToPull > 0)
             {
-                allCommands.Add(new(new PullCommand(_repo)) { Subtitle = $"{commitsToPull} behind" });
+                _pullItem.Subtitle = $"{commitsToPull} behind";
+                allCommands.Add(_pullItem);
             }
             if (currentBranch.TrackedBranch == null || commitsToPush > 0)
             {
@@ -153,9 +169,9 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
             }
         }
 
-        allCommands.Add(new(new BranchListPage(_repo)) { Title = "Checkout...", Subtitle = "Switch branches" });
+        allCommands.Add(_branchListItem);
 
-        allCommands.AddRange(items);
+        //allCommands.AddRange((IEnumerable<ListItem>)items);
 
         IsLoading = false;
         return allCommands.ToArray();
@@ -163,13 +179,56 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
 
     internal static string StagedSubtitle(RepositoryStatus status)
     {
-
         return string.Format(CultureInfo.InvariantCulture,
                                 "Added {0}, Modified {1}, Removed {2} ",
                                 status.Added.Count(),
                                 status.Staged.Count(),
                                 status.Removed.Count());
 
+    }
+    internal static List<Microsoft.CommandPalette.Extensions.Toolkit.Tag> StatusTags(RepositoryStatus status)
+    {
+        var tags = new List<Microsoft.CommandPalette.Extensions.Toolkit.Tag>();
+
+        var added = status.Added.Count();
+        var staged = status.Staged.Count();
+        var removed = status.Removed.Count();
+        var untracked = status.Untracked.Count();
+        var modified = status.Modified.Count();
+        var missing = status.Missing.Count();
+
+        var addedTag = new Microsoft.CommandPalette.Extensions.Toolkit.Tag($"+{added}") { Background = Statics.StateColors[FileStatus.NewInIndex] };
+        var stagedTag = new Microsoft.CommandPalette.Extensions.Toolkit.Tag($"~{staged}") { Background = Statics.StateColors[FileStatus.ModifiedInIndex] };
+        var removedTag = new Microsoft.CommandPalette.Extensions.Toolkit.Tag($"-{removed}") { Background = Statics.StateColors[FileStatus.DeletedFromIndex] };
+        var untrackedTag = new Microsoft.CommandPalette.Extensions.Toolkit.Tag($"+{untracked}") { Foreground = Statics.StateColors[FileStatus.NewInWorkdir] };
+        var modifiedTag = new Microsoft.CommandPalette.Extensions.Toolkit.Tag($"~{modified}") { Foreground = Statics.StateColors[FileStatus.ModifiedInWorkdir] };
+        var missingTag = new Microsoft.CommandPalette.Extensions.Toolkit.Tag($"-{missing}") { Foreground = Statics.StateColors[FileStatus.DeletedFromWorkdir] };
+
+        if (added > 0)
+        {
+            tags.Add(addedTag);
+        }
+        if (staged > 0)
+        {
+            tags.Add(stagedTag);
+        }
+        if (removed > 0)
+        {
+            tags.Add(removedTag);
+        }
+        if (untracked > 0)
+        {
+            tags.Add(untrackedTag);
+        }
+        if (modified > 0)
+        {
+            tags.Add(modifiedTag);
+        }
+        if (missing > 0)
+        {
+            tags.Add(missingTag);
+        }
+        return tags;
     }
 
     private static bool IsUnstagedChange(StatusEntry file)
@@ -193,237 +252,14 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
             state.HasFlag(FileStatus.TypeChangeInIndex);
     }
 
-    private ListItem? FileTolistItem(StatusEntry file, Patch patch)
-    {
-        List<Microsoft.CommandPalette.Extensions.Toolkit.Tag> tags = [];
-        List<Microsoft.CommandPalette.Extensions.Toolkit.Command> commands = [];
-
-        foreach (var state in GetFlags(file.State))
-        {
-            try
-            {
-
-                var tag = Statics.StateTags.TryGetValue(state, out var value) ? value : Statics.UhOhTag;
-                tags.Add(tag);
-
-                Command? command = state switch
-                {
-                    FileStatus.NewInIndex => new UnstageCommand(_repo, file),
-                    FileStatus.ModifiedInIndex => new UnstageCommand(_repo, file),
-                    FileStatus.DeletedFromIndex => new UnstageCommand(_repo, file),
-                    FileStatus.RenamedInIndex => new UnstageCommand(_repo, file),
-                    FileStatus.TypeChangeInIndex => new UnstageCommand(_repo, file),
-
-                    FileStatus.NewInWorkdir => new StageCommand(_repo, file),
-                    FileStatus.ModifiedInWorkdir => new StageCommand(_repo, file),
-                    FileStatus.DeletedFromWorkdir => new StageCommand(_repo, file),
-                    FileStatus.TypeChangeInWorkdir => new StageCommand(_repo, file),
-                    FileStatus.RenamedInWorkdir => new StageCommand(_repo, file),
-
-                    _ => null,
-                };
-
-                if (command != null)
-                {
-                    commands.Add(command);
-                }
-            }
-            catch { }
-
-        }
-
-        try
-        {
-
-            var state = file.State;
-
-            var title = file.FilePath;
-
-            var subtitle = state switch
-            {
-                FileStatus.NewInIndex => "Staged",
-                FileStatus.ModifiedInIndex => "Staged",
-                FileStatus.DeletedFromIndex => "Staged",
-                FileStatus.RenamedInIndex => "Staged",
-                FileStatus.TypeChangeInIndex => "Staged",
-
-                _ => string.Empty,
-            };
-
-            if (file.IndexToWorkDirRenameDetails is RenameDetails rename)
-            {
-                subtitle += $": {rename.OldFilePath} -> {rename.NewFilePath}";
-            }
-            else if (file.HeadToIndexRenameDetails is RenameDetails rename2)
-            {
-                subtitle += $": {rename2.OldFilePath} -> {rename2.NewFilePath}";
-            }
-
-            var fullPath = Path.Combine(_repo.Info.WorkingDirectory, file.FilePath);
-            fullPath = Path.GetFullPath(fullPath);
-
-            var defaultCommand = commands.FirstOrDefault(new NoOpCommand());
-            var remaining = commands.Skip(1);
-
-            //Details? details = null;
-            LazyDetails? lazyDetails = null;
-            // Retrieve the diff for the specified file.            
-            if (patch[file.FilePath] is PatchEntryChanges fileDiff)
-            {
-                string gitDiffBody()
-                {
-                    // Retrieve the full diff text.
-                    var patchText = fileDiff.Patch;
-
-                    // Split the diff text into chunks. 
-                    // The regex splits on lines that start with @@, preserving those lines with a positive lookahead.
-                    var hunks = Regex.Split(patchText, @"(?=^@@)", RegexOptions.Multiline);
-
-                    var markdownDiff = new StringBuilder();
-
-                    // For each chunk, wrap it in its own Markdown code block.
-                    foreach (var hunk in hunks)
-                    {
-                        // Trim to avoid empty code blocks.
-                        if (string.IsNullOrWhiteSpace(hunk))
-                        {
-                            continue;
-                        }
-
-                        markdownDiff.AppendLine("```diff");
-                        markdownDiff.AppendLine(hunk.TrimEnd());
-                        markdownDiff.AppendLine("```");
-                        markdownDiff.AppendLine();
-                    }
-                    return markdownDiff.ToString();
-                }
-
-                lazyDetails = new()
-                {
-                    Body = new(gitDiffBody),
-                };
-            }
-            else
-            {
-            }
-
-            var li = new ListItem(defaultCommand)
-            {
-                Title = title,
-                Subtitle = subtitle,
-                Tags = tags.ToArray(),
-                Details = lazyDetails,
-                // Icon = GetFileIcon(file),
-                MoreCommands = [
-                    ..remaining.Select(c => new CommandContextItem(c)),
-                    new CommandContextItem(new OpenUrlCommand(fullPath)) { Title = "Open file" },
-                    new CommandContextItem(new CopyTextCommand(fullPath)) { Title = "Copy full path" },
-                    new CommandContextItem(new CopyTextCommand(file.FilePath)) { Title = "Copy relative path" },
-                    new CommandContextItem(new ShowFileInFolderCommand(fullPath)) { Title = "Open in explorer" },
-                ],
-            };
-
-            _ = Task.Run(() => { li.Icon = GetFileIcon(file); });
-            return li;
-        }
-        catch (Exception e)
-        {
-            ExtensionHost.LogMessage(e.ToString());
-        }
-        return null;
-    }
-
-    public void Dispose() => throw new System.NotImplementedException();
-
-
-    private static IEnumerable<FileStatus> GetFlags(FileStatus input)
-    {
-        foreach (var value in Enum.GetValues<FileStatus>())
-        {
-            if (value == FileStatus.Unaltered)
-            {
-                continue;
-            }
-
-            if (input.HasFlag(value))
-            {
-                yield return value;
-            }
-        }
-    }
-
-
-    private void OnFilesystemChanged(object sender, FileSystemEventArgs e)
-    {
-        try
-        {
-            // Convert the absolute path to a relative path based on the working directory.
-            var relativePath = Path.GetRelativePath(_repo.Info.WorkingDirectory, e.FullPath);
-
-            // Check if the file is ignored.
-            if (_repo.Ignore.IsPathIgnored(relativePath))
-            {
-                // Skip processing if the file is ignored.
-                return;
-            }
-        }
-        catch { }
-
-        // Reset the debounce timer each time an event is fired
-        lock (_timerLock)
-        {
-            if (_debounceTimer != null)
-            {
-                _debounceTimer.Change(DebounceDelay, Timeout.Infinite);
-            }
-            else
-            {
-                _debounceTimer = new Timer(OnDebounceTimerElapsed, null, DebounceDelay, Timeout.Infinite);
-            }
-        }
-    }
-
-    private void OnDebounceTimerElapsed(object? state)
-    {
-        // Safely dispose of the timer and set to null
-        lock (_timerLock)
-        {
-            _debounceTimer?.Dispose();
-            _debounceTimer = null;
-        }
-
-        // Now, handle the debounced event (250ms after the last event)
-        // Place additional event handling logic here.
-        OnRepoChanged();
-    }
+    // TODO I'm sure this isn't right
+    public void Dispose() =>
+        _repo.Dispose();
 
     private void OnRepoChanged()
     {
-
         Title = $"{_repoData.Name} {BranchString(_repo)}";
         RaiseItemsChanged(-1);
-    }
-
-    private IconInfo? GetFileIcon(StatusEntry file)
-    {
-
-        if (IsStagedChange(file))
-        {
-            return Icons.StagedFile;
-        }
-
-        var path = Path.Combine(_repo.Info.WorkingDirectory, file.FilePath);
-        path = Path.GetFullPath(path);
-        var t = ThumbnailHelper.GetThumbnail(path);
-        t.ConfigureAwait(false);
-        var stream = t.Result;
-        if (stream != null)
-        {
-            var data = new IconData(RandomAccessStreamReference.CreateFromStream(stream));
-            var icon = new IconInfo(data, data);
-            return icon;
-        }
-        return null;
     }
 }
 
