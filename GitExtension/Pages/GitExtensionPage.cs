@@ -16,7 +16,7 @@ namespace GitExtension;
 internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
 {
     private readonly RepoData _repoData;
-    private readonly Repository _repo;
+    private readonly Repository? _repo;
 
     private readonly StatusPage _statusPage;
     private readonly AddAllCommand _addAllCommand;
@@ -45,9 +45,31 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
 
         var repoPath = _repoData.Path;
 
-        _repo = new(repoPath);
+        try
+        {
+            _repo = new(repoPath);
+        }
+        catch (LibGit2SharpException)
+        {
 
-        Title = $"{repo.Name} {BranchString(_repo)}";
+        }
+        if (_repo == null)
+        {
+
+            var emptyCommands = GitExtensionCommandsProvider.ContextMenuForRepo(_repoData);
+
+            EmptyContent = new CommandItem()
+            {
+                Title = "No git repo found",
+                Subtitle = "Run `git init` in this directory to create a repo",
+                Icon = Icons.AppIcon,
+                Command = emptyCommands.First().Command,
+                MoreCommands = emptyCommands.Skip(1).ToArray()
+            };
+            return;
+        }
+
+        Title = $"{_repoData.Name} {(_repo != null ? BranchString(_repo) : string.Empty)}";
 
         //_watcher.EnableRaisingEvents = true;
         _statusPage = new StatusPage(_repoData, _repo);
@@ -83,9 +105,10 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
     }
 
     internal static string BranchString(Repository repo) =>
-        CurrentBranch(repo) is Branch currentBranch ?
-        $"on {currentBranch.FriendlyName}" :
-        $"DETACHED at {repo.Head.Tip.Sha[..8]}";
+        repo.Head.FriendlyName;
+    //CurrentBranch(repo) is Branch currentBranch ?
+    //$"on {currentBranch.FriendlyName}" :
+    //$"DETACHED at {repo.Head.Tip.Sha[..8]}";
 
     internal static string RepoStatusDisplayString(RepositoryStatus status)
     {
@@ -103,11 +126,16 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
 
     public override IListItem[] GetItems()
     {
+        if (_repo == null)
+        {
+            return [];
+        }
+
         IsLoading = true;
         var status = _repo.RetrieveStatus();
 
         // Get the HEAD commit's tree to compare against the working directory.
-        var headTree = _repo.Head.Tip.Tree;
+        //var headTree = _repo.Head.Tip.Tree;
 
         var items = status
             .Where(entry => entry.State is not FileStatus.Unaltered and not FileStatus.Ignored)
@@ -190,12 +218,12 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
         var modified = status.Modified.Count();
         var missing = status.Missing.Count();
 
-        var addedTag = new Microsoft.CommandPalette.Extensions.Toolkit.Tag($"+{added}") { Background = Statics.StateColors[FileStatus.NewInIndex] };
-        var stagedTag = new Microsoft.CommandPalette.Extensions.Toolkit.Tag($"~{staged}") { Background = Statics.StateColors[FileStatus.ModifiedInIndex] };
-        var removedTag = new Microsoft.CommandPalette.Extensions.Toolkit.Tag($"-{removed}") { Background = Statics.StateColors[FileStatus.DeletedFromIndex] };
-        var untrackedTag = new Microsoft.CommandPalette.Extensions.Toolkit.Tag($"+{untracked}") { Foreground = Statics.StateColors[FileStatus.NewInWorkdir] };
-        var modifiedTag = new Microsoft.CommandPalette.Extensions.Toolkit.Tag($"~{modified}") { Foreground = Statics.StateColors[FileStatus.ModifiedInWorkdir] };
-        var missingTag = new Microsoft.CommandPalette.Extensions.Toolkit.Tag($"-{missing}") { Foreground = Statics.StateColors[FileStatus.DeletedFromWorkdir] };
+        var addedTag = new Microsoft.CommandPalette.Extensions.Toolkit.Tag($"+{added}") { ToolTip = "Added", Background = Statics.StateColors[FileStatus.NewInIndex] };
+        var stagedTag = new Microsoft.CommandPalette.Extensions.Toolkit.Tag($"~{staged}") { ToolTip = "Staged", Background = Statics.StateColors[FileStatus.ModifiedInIndex] };
+        var removedTag = new Microsoft.CommandPalette.Extensions.Toolkit.Tag($"-{removed}") { ToolTip = "Removed", Background = Statics.StateColors[FileStatus.DeletedFromIndex] };
+        var untrackedTag = new Microsoft.CommandPalette.Extensions.Toolkit.Tag($"+{untracked}") { ToolTip = "Untracked", Foreground = Statics.StateColors[FileStatus.NewInWorkdir] };
+        var modifiedTag = new Microsoft.CommandPalette.Extensions.Toolkit.Tag($"~{modified}") { ToolTip = "Modified", Foreground = Statics.StateColors[FileStatus.ModifiedInWorkdir] };
+        var missingTag = new Microsoft.CommandPalette.Extensions.Toolkit.Tag($"-{missing}") { ToolTip = "Missing", Foreground = Statics.StateColors[FileStatus.DeletedFromWorkdir] };
 
         if (added > 0)
         {
@@ -247,13 +275,12 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
 
     // TODO I'm sure this isn't right
     public void Dispose() =>
-        _repo.Dispose();
+        _repo?.Dispose();
 
     private void OnRepoChanged()
     {
-        Title = $"{_repoData.Name} {BranchString(_repo)}";
+        Title = $"{_repoData.Name} {(_repo != null ? BranchString(_repo) : string.Empty)}";
         RaiseItemsChanged(-1);
     }
 }
-
 

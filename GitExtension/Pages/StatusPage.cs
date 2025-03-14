@@ -14,7 +14,6 @@ using LibGit2Sharp;
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using Windows.Foundation;
-using Windows.Storage.Streams;
 
 namespace GitExtension;
 
@@ -85,21 +84,23 @@ internal sealed partial class StatusPage : ListPage, System.IDisposable
             return [];
         }
         // Get the HEAD commit's tree to compare against the working directory.
-        var headTree = _repo.Head.Tip.Tree;
-
-        // Generate a patch comparing the HEAD commit to the working directory for the specific file.
-        Patch? patch;
-        try
+        Patch? patch = null;
+        var headTree = _repo.Head.Tip?.Tree;
+        if (headTree != null)
         {
-            patch = _repo.Diff.Compare<Patch>(
-            headTree,
-            DiffTargets.WorkingDirectory
-        );
-        }
-        catch (LibGit2SharpException diffException)
-        {
-            ExtensionHost.LogMessage(diffException.Message);
-            return [];
+            // Generate a patch comparing the HEAD commit to the working directory for the specific file.
+            try
+            {
+                patch = _repo.Diff.Compare<Patch>(
+                headTree,
+                DiffTargets.WorkingDirectory
+            );
+            }
+            catch (LibGit2SharpException diffException)
+            {
+                ExtensionHost.LogMessage(diffException.Message);
+                return [];
+            }
         }
 
         var items = modifiedItems
@@ -161,7 +162,7 @@ internal sealed partial class StatusPage : ListPage, System.IDisposable
             state.HasFlag(FileStatus.TypeChangeInIndex);
     }
 
-    private ListItem? FileTolistItem(StatusEntry file, Patch patch)
+    private ListItem? FileTolistItem(StatusEntry file, Patch? patch)
     {
         List<Microsoft.CommandPalette.Extensions.Toolkit.Tag> tags = [];
         List<Microsoft.CommandPalette.Extensions.Toolkit.Command> commands = [];
@@ -235,7 +236,7 @@ internal sealed partial class StatusPage : ListPage, System.IDisposable
 
             IDetails? details = null;
             // Retrieve the diff for the specified file.            
-            if (patch[file.FilePath] is PatchEntryChanges fileDiff)
+            if (patch?[file.FilePath] is PatchEntryChanges fileDiff)
             {
                 details = new GitDiffDetails(fileDiff);
             }
@@ -340,7 +341,7 @@ internal sealed partial class StatusPage : ListPage, System.IDisposable
         StatusChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    private IconInfo? GetFileIcon(StatusEntry file)
+    private static IconInfo? GetFileIcon(StatusEntry file)
     {
 
         if (IsStagedChange(file))
@@ -348,17 +349,17 @@ internal sealed partial class StatusPage : ListPage, System.IDisposable
             return Icons.StagedFile;
         }
 
-        var path = Path.Combine(_repo.Info.WorkingDirectory, file.FilePath);
-        path = Path.GetFullPath(path);
-        var t = ThumbnailHelper.GetThumbnail(path);
-        t.ConfigureAwait(false);
-        var stream = t.Result;
-        if (stream != null)
-        {
-            var data = new IconData(RandomAccessStreamReference.CreateFromStream(stream));
-            var icon = new IconInfo(data, data);
-            return icon;
-        }
+        //var path = Path.Combine(_repo.Info.WorkingDirectory, file.FilePath);
+        //path = Path.GetFullPath(path);
+        //var t = ThumbnailHelper.GetThumbnail(path);
+        //t.ConfigureAwait(false);
+        //var stream = t.Result;
+        //if (stream != null)
+        //{
+        //    var data = new IconData(RandomAccessStreamReference.CreateFromStream(stream));
+        //    var icon = new IconInfo(data, data);
+        //    return icon;
+        //}
         return null;
     }
 }

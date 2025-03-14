@@ -15,6 +15,7 @@ internal sealed partial class BranchListPage : ListPage
 {
     private readonly Repository _repo;
     private readonly bool _allBranches;
+    private readonly NewBranchPage _newBranchPage;
 
     public BranchListPage(Repository repo, bool all = false)
     {
@@ -22,6 +23,17 @@ internal sealed partial class BranchListPage : ListPage
         _allBranches = all;
         Name = "Branches";
         Icon = Icons.Checkout;
+
+        _newBranchPage = new NewBranchPage(_repo);
+
+        EmptyContent = new CommandItem()
+        {
+            Command = _newBranchPage,
+            Icon = _newBranchPage.Icon,
+            Title = "No matching branches found",
+            Subtitle = "Make a new one?",
+        };
+
     }
 
     public override IListItem[] GetItems()
@@ -30,7 +42,7 @@ internal sealed partial class BranchListPage : ListPage
             .Where(b => !b.IsRemote || _allBranches)
             .Select(BranchToListItem);
 
-        return [new ListItem(new NewBranchPage(_repo)), .. branches];
+        return [new ListItem(_newBranchPage), .. branches];
     }
 
     private ListItem BranchToListItem(Branch b)

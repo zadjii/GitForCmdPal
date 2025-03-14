@@ -15,6 +15,9 @@ internal sealed class Icons
 
     public static readonly IconInfo TerminalIcon = IconHelpers.FromRelativePath("Assets\\svg\\Terminal.svg");
     public static readonly IconInfo VisualStudioIcon = IconHelpers.FromRelativePath("Assets\\svg\\Visual_Studio_Icon_2019.svg");
+    public static readonly IconInfo GitHubIcon = IconHelpers.FromRelativePaths(
+        "Assets\\svg\\github-mark.svg",
+        "Assets\\svg\\github-mark-white.svg");
 
     public static readonly IconInfo Nonexistent_File_Icon = new("");
     public static readonly IconInfo Unaltered_File_Icon = new("");
@@ -47,5 +50,8 @@ internal sealed class Icons
     public static readonly IconInfo CurrentBranch = new("\uE73D"); // CheckboxCompositeReversed
 
     public static readonly IconInfo Completed = new("\uE930"); // Completed
+    public static readonly IconInfo Unknown = new("\uE9CE"); // Unknown
+
+
 
 }

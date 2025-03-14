@@ -94,7 +94,6 @@ internal sealed partial class PushCommand : InvokableCommand
     }
 }
 
-
 internal sealed partial class PushListPage : ListPage
 {
     private readonly Repository _repo;
@@ -106,6 +105,17 @@ internal sealed partial class PushListPage : ListPage
         Title = $"Push {currentBranch.FriendlyName} to...";
         Name = "Push to...";
         Icon = Icons.Push;
+
+        EmptyContent = new CommandItem()
+        {
+            Command = new OpenUrlCommand("https://github.com/new")
+            {
+                Name = "Create on GitHub",
+                Icon = Icons.GitHubIcon,
+            },
+            Icon = Icons.Unknown,
+            Title = "No remotes found",
+        };
     }
 
     public override IListItem[] GetItems()
