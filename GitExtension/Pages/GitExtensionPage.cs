@@ -34,7 +34,6 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
     //private ListItem? _pushItem;
     private readonly ListItem _branchListItem;
 
-
     public GitExtensionPage(RepoData repo)
     {
         _repoData = repo;
@@ -89,6 +88,7 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
         _branchListItem = new(_branchListPage) { Title = "Checkout...", Subtitle = "Switch branches" };
 
         _statusPage.StatusChanged += (s, e) => OnRepoChanged();
+        _statusPage.FileSystemChanged += (s, e) => IsLoading = true;
 
     }
 
@@ -279,6 +279,7 @@ internal sealed partial class GitExtensionPage : ListPage, System.IDisposable
 
     private void OnRepoChanged()
     {
+        IsLoading = true;
         Title = $"{_repoData.Name} {(_repo != null ? BranchString(_repo) : string.Empty)}";
         RaiseItemsChanged(-1);
     }

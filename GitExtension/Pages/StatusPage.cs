@@ -27,6 +27,7 @@ internal sealed partial class StatusPage : ListPage, System.IDisposable
     private const int DebounceDelay = 250; // milliseconds
     private readonly Lock _timerLock = new();
 
+    internal event TypedEventHandler<StatusPage, object>? FileSystemChanged;
     internal event TypedEventHandler<StatusPage, object>? StatusChanged;
 
     public StatusPage(RepoData repoData, Repository repo)
@@ -303,6 +304,8 @@ internal sealed partial class StatusPage : ListPage, System.IDisposable
                 // Skip processing if the file is ignored.
                 return;
             }
+            FileSystemChanged?.Invoke(this, e);
+            IsLoading = true;
         }
         catch { }
 
